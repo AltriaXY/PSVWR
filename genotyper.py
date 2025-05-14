@@ -352,6 +352,7 @@ def process_one_path(graph, path, bubble_chrom, shared_chr2ref_seg, start_seg, e
             REF, ALT = (graph.nodes[s1]["base"][-1] + extract_path_beses_from_graph(ref_p, graph),
                         graph.nodes[s1]["base"][-1] + extract_path_beses_from_graph(alt_p, graph))
             SVPATH = extract_path_format_from_graph(alt_p_complete, graph)
+            SVLEN = len(ALT) - len(REF)
             if len(REF) >= 30 or len(ALT) >= 30:
                 if len(REF) > len(ALT):
                     SVTYPE = "DEL"
@@ -359,14 +360,12 @@ def process_one_path(graph, path, bubble_chrom, shared_chr2ref_seg, start_seg, e
                     SVTYPE = "INS"
                 else:
                     SVTYPE = "REPLACE"
-                SVLEN = len(ALT) - len(REF)
                 END = shared_chr2ref_seg[bubble_chrom][s2]
                 COVER, _ = calculate_path_coverage(alt_p_complete, ref_seg_dict, alt_seg_dict)
                 vcf.append((bubble_chrom, POS, "", REF, ALT, 255, ".", (SVPATH, SVTYPE, SVLEN, END, COVER), "GT", "1/."))
     return set(vcf)
 
-'''
-def process_one_path(graph, path, bubble_chrom, shared_chr2ref_seg, start_seg, end_seg, ref_seg_dict, alt_seg_dict):
+def process_one_path2(graph, path, bubble_chrom, shared_chr2ref_seg, start_seg, end_seg, ref_seg_dict, alt_seg_dict):
     vcf = list()
     index_non_ref = list()
     index_ref = list()
@@ -385,24 +384,31 @@ def process_one_path(graph, path, bubble_chrom, shared_chr2ref_seg, start_seg, e
         if len(group) == 1:
             pass
         else:
+            ir = list()
             j = 0
-            for j in range(len(group) - 1):
-                s1, s2 = path[group[j]], path[group[j+1]]
-                i1, i2 = ref_path.index(s1) + 1, ref_path.index(s2)
-                if i1 == i2:
+            for j in range(len(group)):
+                s = path[group[j]]
+                ir.append(ref_path.index(s))
+                ir_group = extract_consecutive_groups(ir)
+                if len(ir_group) == 1:
                     pass
                 else:
-                    bases = graph.nodes[s1]["base"][-1]
-                    bases += extract_path_beses_from_graph(ref_path[i1 : i2], graph)
-                    SVLEN = 1 - len(bases)
-                    if SVLEN <= -30:
-                        pos = shared_chr2ref_seg[bubble_chrom][ref_path[i1]]
-                        SVPATH = ">{}>{}".format(s1, s2)
-                        SVTYPE = "DEL"
-                        END = shared_chr2ref_seg[bubble_chrom][s2]
-                        COVER, _ = calculate_path_coverage([s1, s2], ref_seg_dict, alt_seg_dict)
-                        vcf.append(
-                            (bubble_chrom, pos, "", bases, bases[0], 255, ".", (SVPATH, SVTYPE, SVLEN, END, COVER), "GT", "1/."))
+                    k = 0
+                    for k in range(len(ir_group) - 1):
+                        i1, i2 = ir_group[k][-1], ir_group[k+1][0]
+                        s1, s2 = ref_path[i1], ref_path[i2]
+
+                        bases = graph.nodes[s1]["base"][-1]
+                        bases += extract_path_beses_from_graph(ref_path[i1 + 1 : i2], graph)
+                        SVLEN = 1 - len(bases)
+                        if SVLEN <= -30:
+                            pos = shared_chr2ref_seg[bubble_chrom][ref_path[i1 + 1]]
+                            SVPATH = ">{}>{}".format(s1, s2)
+                            SVTYPE = "DEL"
+                            END = shared_chr2ref_seg[bubble_chrom][s2]
+                            COVER, _ = calculate_path_coverage([s1, s2], ref_seg_dict, alt_seg_dict)
+                            vcf.append(
+                                (bubble_chrom, pos, "", bases, bases[0], 255, ".", (SVPATH, SVTYPE, SVLEN, END, COVER), "GT", "1/."))
         #other svs on branches
     if index_non_ref == list():
         pass
@@ -433,11 +439,12 @@ def process_one_path(graph, path, bubble_chrom, shared_chr2ref_seg, start_seg, e
                 vcf.append(
                     (bubble_chrom, pos, "", ref, alt, 255, ".", (SVPATH, SVTYPE, SVLEN, END, COVER), "GT", "1/."))
     return set(vcf)
-'''
+
 
 def genotyping_one_bubble(bubble_chrom, segments, shared_ref_seg2chr, shared_chr2ref_seg,
-                          shared_gfa_index_dict, shared_gfa_offset_list, gfa_dir, average_cover):
-    cutoff = max(0.3 * average_cover, 3)
+                          shared_gfa_index_dict, shared_gfa_offset_list, gfa_dir, average_cover,
+                          out_type):
+    cutoff = max(0.2 * average_cover, 3)
     vcf_list = list()
     ref_seg, alt_seg = dict(), dict()
     t = False
@@ -588,9 +595,9 @@ def genotyping_one_bubble(bubble_chrom, segments, shared_ref_seg2chr, shared_chr
             second_path, second_path_coverage = list(), -1
             first_path_coverage, first_path_length = calculate_path_coverage(first_path, ref_seg, alt_seg)
             genetic_constitution = -1  # 0 = Homo, 1 = Hetero, -1 = reads coverage is not enough
-            if first_path_coverage < max(0.3 * average_cover, 3):
+            if first_path_coverage < max(0.2 * average_cover, 3):
                 pass
-            elif first_path_coverage >= 0.7 * average_cover:
+            elif first_path_coverage >= 0.8 * average_cover:
                 genetic_constitution = 0
             else:
                 second_path, second_path_coverage = next(paths, None), -1
@@ -601,48 +608,77 @@ def genotyping_one_bubble(bubble_chrom, segments, shared_ref_seg2chr, shared_chr
                     two_paths_intersection = set(first_path)
                     two_paths_intersection.intersection(set(second_path))
                     _, two_paths_intersection_length = calculate_path_coverage(two_paths_intersection, ref_seg, alt_seg)
-                    if second_path_coverage < max(0.3 * average_cover, 3):
+                    if second_path_coverage < max(0.2 * average_cover, 3):
                         genetic_constitution = 0
                     else:
                         if (two_paths_intersection_length / first_path_length >= 0.9) or (two_paths_intersection_length / second_path_length >= 0.9):
                             genetic_constitution = 0
                         else:
                             genetic_constitution = 1
-            if genetic_constitution == -1:
-                pass
-            elif genetic_constitution == 0:
-                first_path = tuple(first_path)
-                l1 = process_one_path(G, first_path, bubble_chrom, shared_chr2ref_seg, start_seg, end_seg,
-                                            ref_seg, alt_seg)
-                for vcf in l1:
-                    vcf_list.append((vcf[0], vcf[1], vcf[2], vcf[3], vcf[4], vcf[5], vcf[6],
-                                     vcf[7], vcf[8], "1/1"))
-            elif genetic_constitution == 1:
-                first_path, second_path = tuple(first_path), tuple(second_path)
-                l1 = process_one_path(G, first_path, bubble_chrom, shared_chr2ref_seg, start_seg, end_seg,
-                                      ref_seg, alt_seg)
-                l2 = process_one_path(G, second_path, bubble_chrom, shared_chr2ref_seg, start_seg, end_seg,
-                                      ref_seg, alt_seg)
-                for vcf in l2:
-                    if vcf in l1:
+            if out_type == 1:
+                if genetic_constitution == -1:
+                    pass
+                elif genetic_constitution == 0:
+                    first_path = tuple(first_path)
+                    l1 = process_one_path(G, first_path, bubble_chrom, shared_chr2ref_seg, start_seg, end_seg,
+                                                ref_seg, alt_seg)
+                    for vcf in l1:
                         vcf_list.append((vcf[0], vcf[1], vcf[2], vcf[3], vcf[4], vcf[5], vcf[6],
                                          vcf[7], vcf[8], "1/1"))
-                        l1.discard(vcf)
-                    else:
+                elif genetic_constitution == 1:
+                    first_path, second_path = tuple(first_path), tuple(second_path)
+                    l1 = process_one_path(G, first_path, bubble_chrom, shared_chr2ref_seg, start_seg, end_seg,
+                                          ref_seg, alt_seg)
+                    l2 = process_one_path(G, second_path, bubble_chrom, shared_chr2ref_seg, start_seg, end_seg,
+                                          ref_seg, alt_seg)
+                    for vcf in l2:
+                        if vcf in l1:
+                            vcf_list.append((vcf[0], vcf[1], vcf[2], vcf[3], vcf[4], vcf[5], vcf[6],
+                                             vcf[7], vcf[8], "1/1"))
+                            l1.discard(vcf)
+                        else:
+                            vcf_list.append((vcf[0], vcf[1], vcf[2], vcf[3], vcf[4], vcf[5], vcf[6],
+                                             vcf[7], vcf[8], "0/1"))
+                    for vcf in l1:
                         vcf_list.append((vcf[0], vcf[1], vcf[2], vcf[3], vcf[4], vcf[5], vcf[6],
                                          vcf[7], vcf[8], "0/1"))
-                for vcf in l1:
-                    vcf_list.append((vcf[0], vcf[1], vcf[2], vcf[3], vcf[4], vcf[5], vcf[6],
-                                     vcf[7], vcf[8], "0/1"))
+            elif out_type == 2:
+                if genetic_constitution == -1:
+                    pass
+                elif genetic_constitution == 0:
+                    first_path = tuple(first_path)
+                    l1 = process_one_path2(G, first_path, bubble_chrom, shared_chr2ref_seg, start_seg, end_seg,
+                                                ref_seg, alt_seg)
+                    for vcf in l1:
+                        vcf_list.append((vcf[0], vcf[1], vcf[2], vcf[3], vcf[4], vcf[5], vcf[6],
+                                         vcf[7], vcf[8], "1/1"))
+                elif genetic_constitution == 1:
+                    first_path, second_path = tuple(first_path), tuple(second_path)
+                    l1 = process_one_path2(G, first_path, bubble_chrom, shared_chr2ref_seg, start_seg, end_seg,
+                                          ref_seg, alt_seg)
+                    l2 = process_one_path2(G, second_path, bubble_chrom, shared_chr2ref_seg, start_seg, end_seg,
+                                          ref_seg, alt_seg)
+                    for vcf in l2:
+                        if vcf in l1:
+                            vcf_list.append((vcf[0], vcf[1], vcf[2], vcf[3], vcf[4], vcf[5], vcf[6],
+                                             vcf[7], vcf[8], "1/1"))
+                            l1.discard(vcf)
+                        else:
+                            vcf_list.append((vcf[0], vcf[1], vcf[2], vcf[3], vcf[4], vcf[5], vcf[6],
+                                             vcf[7], vcf[8], "0/1"))
+                    for vcf in l1:
+                        vcf_list.append((vcf[0], vcf[1], vcf[2], vcf[3], vcf[4], vcf[5], vcf[6],
+                                         vcf[7], vcf[8], "0/1"))
     return vcf_list
 
 def genotyping_several_bubbles(several_bubbles_list, shared_ref_seg2chr, shared_chr2ref_seg,
-                               shared_gfa_index_dict, shared_gfa_offset_list, gfa_dir, average_cover):
+                               shared_gfa_index_dict, shared_gfa_offset_list, gfa_dir, average_cover,
+                               out_type):
     return [genotyping_one_bubble(*args, shared_ref_seg2chr, shared_chr2ref_seg,
                                   shared_gfa_index_dict, shared_gfa_offset_list,
-                                  gfa_dir, average_cover) for args in several_bubbles_list]
+                                  gfa_dir, average_cover, out_type) for args in several_bubbles_list]
 def genotyping(bubble_dict, shared_ref_seg2chr, shared_chr2ref_seg, shared_gfa_index_dict, shared_gfa_offset_list,
-               gfa_dir, average_cover, thread):
+               gfa_dir, average_cover, out_type, thread):
     variants_in_large_bubbles = list()
     batch_size = 10
     batch = list([] for i in range(thread))
@@ -662,7 +698,7 @@ def genotyping(bubble_dict, shared_ref_seg2chr, shared_chr2ref_seg, shared_gfa_i
                     for ttt in batch:
                         future = executor.submit(genotyping_several_bubbles, ttt, shared_ref_seg2chr,
                                              shared_chr2ref_seg, shared_gfa_index_dict, shared_gfa_offset_list,
-                                             gfa_dir, average_cover)
+                                             gfa_dir, average_cover, out_type)
                         futures.add(future)
                         if len(futures) >= max_pending:
                             done, futures = wait(futures, return_when=FIRST_COMPLETED)
@@ -690,6 +726,7 @@ def main():
     parser.add_argument("-i", "--input", type=str, help="alignment to pan-genome in gaf format")
     parser.add_argument("-g", "--gfa_in", type=str, help="input pan-genome graph in gfa format")
     parser.add_argument("-o", "--output", type=str, help="output_SV")
+    parser.add_argument("-ot", "--out_type", type=int, help="1 for one sv per bubble, 2 for several")
     parser.add_argument("-t", "--thread", type=int, default=1, help="thread(default=1)")
     args = parser.parse_args()
 
@@ -722,6 +759,7 @@ def main():
     gaf = args.input  # input gaf
     gfa = args.gfa_in  # input gfa
     out_dir = args.output  # output directory
+    out_type = args.out_type
     thread = args.thread  # thread
 
     #bubble
@@ -808,7 +846,7 @@ def main():
         del gfa_offset_list
 
         vcf_info = genotyping(bubble, shared_reference_seg2chr, shared_chr2reference_seg, shared_gfa_index_dict,
-                              shared_gfa_offset_list, gfa, average_cover, thread)
+                              shared_gfa_offset_list, gfa, average_cover, out_type, thread)
         del shared_gfa_offset_list, shared_reference_seg2chr
 
         print("Finish genotyping in {}s.".format(time.time() - time4))
