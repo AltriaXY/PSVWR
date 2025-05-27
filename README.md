@@ -1,3 +1,11 @@
+## Introduction
+
+PSVWR (Pan-genome Structural Variants Walker) is a tool that is still under development. It attempts to perform genotyping of SVs in sample based on the third-generation sequencing alignment result and complex graph pan-genome (including SNPs, indels, SVs, etc.).
+
+Limitation:
+- At present, the genotyping results are not satisfactory and further improvements are needed.
+- Cannot detect noval SVs now.
+
 ## Dependencies
 
 - Python >= 3.7
